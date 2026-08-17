@@ -176,6 +176,38 @@ function ScoreRing({ score, label, size = 80 }: { score: number; label: string; 
 export default function VoiceInterviewPage() {
   const router = useRouter();
 
+  // ── Fullscreen Helpers ──────────────────────────────────────────────────────
+  const requestFullscreen = () => {
+    try {
+      const elem = document.documentElement;
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen().catch((err) => console.warn("Fullscreen error:", err));
+      } else if ((elem as any).webkitRequestFullscreen) {
+        (elem as any).webkitRequestFullscreen();
+      } else if ((elem as any).msRequestFullscreen) {
+        (elem as any).msRequestFullscreen();
+      }
+    } catch (e) {
+      console.warn("Fullscreen request not supported:", e);
+    }
+  };
+
+  const exitFullscreen = () => {
+    try {
+      if (document.fullscreenElement) {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch((err) => console.warn("Fullscreen exit error:", err));
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        } else if ((document as any).msExitFullscreen) {
+          (document as any).msExitFullscreen();
+        }
+      }
+    } catch (e) {
+      console.warn("Fullscreen exit error:", e);
+    }
+  };
+
   // Dashboard state
   const [interviews, setInterviews] = useState<any[]>([]);
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -410,6 +442,27 @@ export default function VoiceInterviewPage() {
     [isMuted]
   );
 
+  // Exit fullscreen if interview finishes or fails
+  useEffect(() => {
+    if (["completed", "error", "dashboard"].includes(phase)) {
+      exitFullscreen();
+    }
+  }, [phase]);
+
+  const handleEndInterview = async () => {
+    if (confirm("Are you sure you want to end this interview session? We will generate your report now.")) {
+      window.speechSynthesis?.cancel();
+      exitFullscreen();
+      
+      const hasAnswers = answers.some((a) => a && a.trim());
+      if (hasAnswers) {
+        await fetchAndSpeakFinalSummary(answers);
+      } else {
+        router.push("/interview/voice");
+      }
+    }
+  };
+
   // ── Start Interview ────────────────────────────────────────────────────────
   const handleStartInterview = useCallback(async () => {
     if (questions.length === 0) return;
@@ -427,6 +480,8 @@ export default function VoiceInterviewPage() {
       );
       return;
     }
+
+    requestFullscreen();
 
     const greeting = `Hello! Welcome to your ${interviewType} interview for the ${role} position${company !== "the company" ? ` at ${company}` : ""}. I am your AI interviewer today. We have ${questions.length} questions prepared for you. Please speak your answers clearly into your microphone. Let's begin with our first question: ${questions[0]}`;
     setPhase("greeting");
@@ -1037,15 +1092,10 @@ export default function VoiceInterviewPage() {
         <header className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0e112a]/90 backdrop-blur-sm shrink-0">
           <h1 className="text-xl font-bold text-white tracking-wide">Interview Session</h1>
           <button
-            onClick={() => {
-              if (confirm("Are you sure you want to leave the interview? Your progress so far will be lost.")) {
-                window.speechSynthesis?.cancel();
-                window.location.href = "/interview/voice";
-              }
-            }}
+            onClick={handleEndInterview}
             className="border border-rose-500/30 hover:border-rose-500 hover:bg-rose-500/10 text-rose-500 rounded-xl px-5 py-2 text-xs font-semibold tracking-wide transition-all duration-200"
           >
-            Leave Interview
+            End Interview
           </button>
         </header>
 
@@ -1381,18 +1431,10 @@ export default function VoiceInterviewPage() {
             {/* End interview */}
             {sessionStarted && (
               <button
-                onClick={() => {
-                  if (confirm("End this interview session? We can generate your report now.")) {
-                    if (answers.some((a) => a.trim())) {
-                      fetchAndSpeakFinalSummary(answers);
-                    } else {
-                      window.location.href = "/interview/voice";
-                    }
-                  }
-                }}
+                onClick={handleEndInterview}
                 className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold px-3 py-2 rounded-xl text-xs transition-all"
               >
-                <PhoneOff className="h-3.5 w-3.5" /> End
+                <PhoneOff className="h-3.5 w-3.5" /> End Interview
               </button>
             )}
           </div>

@@ -110,13 +110,21 @@ The candidate just answered the FINAL question ({q_num} of {total}).
 Question: "{q}"
 Candidate's Answer: "{ans}"
 
-Speak 2-3 natural, conversational sentences:
-1. Give an honest, warm reaction — mention one genuine strength and one improvement area
-2. Congratulate them on completing the interview and mention their detailed report will be ready shortly
+Analyze the candidate's response specifically and speak 2-3 natural, conversational sentences:
+1. Give an honest, personalized reaction to their answer:
+   - If the answer is strong, briefly acknowledge what they did well.
+   - If the answer is incomplete, briefly note the main missing element.
+   - If there is a technical mistake, point it out politely and give a short correction.
+   - If the answer is unclear, mention what was hard to follow.
+2. Congratulate them on completing the interview and mention their detailed report will be ready shortly.
 
-Rules: Spoken English only. No bullet points, no markdown, no numbered lists. Single paragraph. Sound warm and professional, like a real interviewer."""
+Rules:
+- Spoken English only. No bullet points, no markdown, no lists. Single paragraph.
+- Behave like a real human interviewer who actually listened to their response, not a chatbot repeating templates.
+- Keep it warm and professional."""
+
         spoken_fallback = (
-            "Thank you for your thoughtful answer. You covered the key points well, "
+            "Thank you for your response. You covered the key points, "
             "though adding a specific real-world example would make it even stronger. "
             "That was our final question — you've done a great job completing the interview! "
             "Your full evaluation report will be ready in just a moment."
@@ -128,14 +136,31 @@ The candidate just answered question {q_num} of {total}.
 Question asked: "{q}"
 Candidate's Answer: "{ans}"
 
-Speak 2-3 natural, conversational sentences:
-1. Give a brief, honest reaction — acknowledge what they got right and mention one thing to improve
-2. Smoothly transition: "Moving on to question {q_num + 1}: {next_q}"
+Analyze the candidate's response specifically and speak 2-3 natural, conversational sentences:
+1. Give a brief, personalized reaction based specifically on what they said:
+   - If the answer is good: briefly acknowledge what was done well.
+   - If the answer is incomplete: briefly mention what could be improved.
+   - If there is a technical mistake: point it out politely and provide a short correction.
+   - If the answer is unclear: briefly ask for clarification or ask a follow-up related to the topic.
+2. Smoothly transition to the next question: "Moving on to question {q_num + 1}: {next_q}"
 
-Rules: Spoken English only. No bullet points, no markdown. Single flowing paragraph. Warm and professional tone."""
+Rules:
+- Spoken English only. No bullet points, no markdown. Single flowing paragraph.
+- Avoid repeating generic phrases like "Good response, let's move to the next question" for every answer.
+- Tailor your feedback specifically to what the candidate just said. Keep it concise so it doesn't sound like a long lecture."""
+
+        # Pool of diverse fallback responses based on question number to prevent repetition
+        fallbacks_pool = [
+            ("Good response — you touched on the important points.", "To strengthen it, try including a concrete example from your experience."),
+            ("Acknowledge your answer on that.", "One suggestion is to elaborate more on the technical architecture or implementation details."),
+            ("Thank you for sharing your thoughts on this.", "To make this even stronger, you could highlight the specific trade-offs or alternatives."),
+            ("Solid answer, that highlights your understanding.", "You might also want to mention the performance or scaling considerations."),
+        ]
+        fb_idx = (q_num - 1) % len(fallbacks_pool)
+        phrase_good, phrase_improve = fallbacks_pool[fb_idx]
+        
         spoken_fallback = (
-            f"Good response — you touched on the important points. "
-            f"To strengthen it, try including a concrete example from your experience. "
+            f"{phrase_good} {phrase_improve} "
             f"Moving on to question {q_num + 1}: {next_q}"
         )
 

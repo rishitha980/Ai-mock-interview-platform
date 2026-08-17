@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from bson import ObjectId
@@ -13,6 +13,11 @@ from auth.auth import router as auth_router
 from utils.gemini_service import generate_questions, evaluate_answers
 
 app = FastAPI(title="AI Mock Interview API")
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
+
 
 # Configure CORS for Next.js frontend
 app.add_middleware(
@@ -108,7 +113,9 @@ async def create_interview(interview_in: InterviewCreate, user_email: str = Depe
             job_description=interview_in.job_description,
             difficulty_level=interview_in.difficulty_level,
             num_questions=interview_in.num_questions or 10,
-            preferred_language=interview_in.preferred_language or "English"
+            preferred_language=interview_in.preferred_language or "English",
+            user_id=user_email,
+            resume_id=interview_in.resume_id
         )
         
         interview_data = Interview(

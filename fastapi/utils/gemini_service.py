@@ -10,38 +10,129 @@ from google.genai import types
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gemini_service")
 
-# Initialize Gemini Client
-api_key = os.getenv("GEMINI_API_KEY")
-client = None
-if api_key:
-    try:
-        client = genai.Client(api_key=api_key)
-        logger.info("Gemini SDK client initialized successfully using google.genai.")
-    except Exception as e:
-        logger.error(f"Failed to initialize Gemini Client: {e}")
-else:
-    logger.warning("GEMINI_API_KEY environment variable is not set. Using fallback mock responses.")
+# Initialize Gemini Client dynamically
+_client_cache = None
+_last_api_key = None
+_warned_no_key = False
 
-def generate_questions(role: str, experience: str, tech_stack: List[str], job_description: str, difficulty_level: str = "Medium", num_questions: int = 5, preferred_language: str = "English") -> List[str]:
+def get_client():
+    global _client_cache, _last_api_key, _warned_no_key
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        try:
+            from database.connection import settings_collection
+            settings = settings_collection.find_one({"key": "ai_config"})
+            if settings:
+                api_key = settings.get("api_key")
+        except Exception as e:
+            logger.error(f"Failed to fetch GEMINI_API_KEY from database: {e}")
+            
+    if api_key:
+        _warned_no_key = False
+        if _client_cache is not None and _last_api_key == api_key:
+            return _client_cache
+        try:
+            _client_cache = genai.Client(api_key=api_key)
+            _last_api_key = api_key
+            logger.info("Gemini SDK client initialized successfully using google.genai.")
+            return _client_cache
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini Client: {e}")
+            _client_cache = None
+            _last_api_key = None
+            return None
+            
+    _client_cache = None
+    _last_api_key = None
+    if not _warned_no_key:
+        logger.warning("GEMINI_API_KEY environment variable and settings API key are not set. Using fallback mock responses.")
+        _warned_no_key = True
+    return None
+
+def __getattr__(name: str):
+    if name == "client":
+        return get_client()
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
+def generate_questions(role: str, experience: str, tech_stack: List[str], job_description: str, difficulty_level: str = "Medium", num_questions: int = 5, preferred_language: str = "English", user_id: str = None, resume_id: str = None) -> List[str]:
     """
     Generates N interview questions using Gemini based on role, experience, tech stack, difficulty, language, and JD.
     """
+    client = get_client()
     count = num_questions or 5
     lang = preferred_language or "English"
+
+    # Resolve candidate experience level from resume/profile or interview payload
+    detected_experience = experience
+    resume = None
+    
+    from database.connection import resumes_collection, users_collection
+    
+    if resume_id:
+        from bson import ObjectId
+        try:
+            resume = resumes_collection.find_one({"_id": ObjectId(resume_id)})
+        except Exception:
+            resume = resumes_collection.find_one({"_id": resume_id})
+    if not resume and user_id:
+        resume = resumes_collection.find_one({"user_id": user_id})
+
+    if resume:
+        parsed_exp = resume.get("parsed_data", {}).get("experience")
+        if parsed_exp:
+            detected_experience = parsed_exp
+
+    if (not detected_experience or "Not Specified" in str(detected_experience)) and user_id:
+        user = users_collection.find_one({"email": user_id})
+        if user:
+            detected_experience = user.get("experience") or detected_experience
+
+    # Classify experience level as "Fresher" or "Experienced"
+    exp_class = "Experienced"
+    if detected_experience:
+        exp_lower = str(detected_experience).lower()
+        if any(kw in exp_lower for kw in ["fresher", "entry level", "entry-level", "0-1", "intern", "graduate"]):
+            exp_class = "Fresher"
+
+    # Add experience-based custom prompt guidelines
+    if exp_class == "Fresher":
+        exp_guideline = f"""
+        Candidate Experience Classification: FRESHER (Entry-level candidate / student / intern / 0-1 years of experience).
+        - Generate foundational to intermediate questions realistic for an entry-level job interview.
+        - Focus mainly on: basic concepts of technologies mentioned in their tech stack, self-introduction, education, academic projects, internships, basic problem-solving/coding logic, and standard HR questions.
+        - Do NOT ask highly advanced system design, deep distributed systems architecture, scale, or senior leadership/management scenario questions.
+        - The questions should assess their potential, coding fundamentals, and knowledge of the core concepts in their tech stack: {', '.join(tech_stack)}.
+        """
+    else:
+        exp_guideline = f"""
+        Candidate Experience Classification: EXPERIENCED (Professional candidate with experience level: {detected_experience}).
+        - Generate questions appropriate for an experienced professional matching their actual seniority, job role, skills, projects, and technologies.
+        - The questions should be advanced and test practical, scenario-based, and role-specific engineering.
+        - Include deep technical questions, system architecture, performance optimization, concurrency, caching, database indexing, debugging complex issues, and architectural trade-off analysis.
+        """
+
     if not client:
         # Fallback Mock questions
-        base_qs = [
-            f"Can you explain your experience working with {', '.join(tech_stack) if tech_stack else 'modern technologies'} in a {role} role?",
-            f"What is the most challenging technical project you worked on with {tech_stack[0] if tech_stack else 'software engineering'}, and how did you handle it?",
-            "How do you ensure application security and performance during development?",
-            "Explain how you handle state management in a complex application or backend architecture.",
-            "Describe a time when you had to collaborate with cross-functional teams to deliver a critical feature under a tight deadline.",
-            "What criteria do you use when deciding between different architectural patterns or database solutions for a scalable system?",
-            "How do you approach debugging high-concurrency or memory-leak issues in production environments?",
-            "Can you walk through your process for writing clean, testable, and maintainable code?",
-            "Describe how you handle CI/CD pipelines, automated testing, and zero-downtime deployments.",
-            "If you encountered a critical system outage or security vulnerability right before a major release, what exact steps would you take?"
-        ]
+        if exp_class == "Fresher":
+            base_qs = [
+                f"Can you introduce yourself and tell me about your interest in a {role} role?",
+                f"What is the most interesting project or internship you worked on, and what technologies did you use?",
+                f"Can you explain the basic differences between standard programming paradigms or concepts in {tech_stack[0] if tech_stack else 'software engineering'}?",
+                f"How do you approach debugging a simple syntax or logic error in your code?",
+                f"Tell me about a time you worked in a team project during college. What role did you play?",
+                f"Why did you choose to learn the technologies listed in your profile: {', '.join(tech_stack[:3]) if tech_stack else 'these technologies'}?",
+                "What is your understanding of web application fundamentals (like HTTP requests, databases)?"
+            ]
+        else:
+            base_qs = [
+                f"Can you explain your experience working with {', '.join(tech_stack) if tech_stack else 'modern technologies'} in a {role} role?",
+                f"What is the most challenging technical project you worked on with {tech_stack[0] if tech_stack else 'software engineering'}, and how did you handle it?",
+                "How do you ensure application security and performance during development?",
+                "Explain how you handle state management or scaling in a complex application or backend architecture.",
+                "Describe a time when you had to collaborate with cross-functional teams to deliver a critical feature under a tight deadline.",
+                "What criteria do you use when deciding between different architectural patterns or database solutions for a scalable system?",
+                "How do you approach debugging high-concurrency or memory-leak issues in production environments?"
+            ]
         return base_qs[:count]
 
     difficulty_instructions = {
@@ -54,11 +145,14 @@ def generate_questions(role: str, experience: str, tech_stack: List[str], job_de
     prompt = f"""
     You are an expert technical interviewer. Generate a list of exactly {count} interview questions tailored for a candidate with the following profile:
     - Role: {role}
-    - Experience Level: {experience}
+    - Target Experience Level: {detected_experience} (Classified as {exp_class})
     - Tech Stack: {', '.join(tech_stack)}
     - Job Description: {job_description}
     - Difficulty Level: {difficulty_level}
     - Preferred Language: {lang}
+
+    Experience Level Instructions:
+    {exp_guideline}
 
     Difficulty Guideline:
     {diff_instruction}
@@ -106,6 +200,7 @@ def evaluate_answers(questions: List[str], answers: List[str]) -> Dict[str, Any]
     Evaluates the submitted answers against generated questions.
     Returns overall score, technical score, communication score, overall feedback, strengths, weaknesses, and detailed list of evaluations.
     """
+    client = get_client()
     if not client:
         # Fallback Mock evaluation
         evals = []
@@ -275,6 +370,7 @@ def parse_resume_data(base64_data: str, mime_type: str) -> dict:
     Extracts text dynamically and uses Gemini to analyze the resume contents.
     If Gemini is not available, uses dynamic text-based matching to generate unique scores and suggestions.
     """
+    client = get_client()
     import base64 as b64
     try:
         file_bytes = b64.b64decode(base64_data)
@@ -774,6 +870,7 @@ def match_resume_to_jd(resume_parsed_info: dict, jd_text: str) -> dict:
     Compares the candidate's parsed resume details against a job description.
     Returns matching score %, key matching skills, missing skills/gaps, and custom tips.
     """
+    client = get_client()
     if not client:
         return {
             "match_score": 75,
